@@ -1,4 +1,8 @@
 using SpotifyAPI.Web;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using Image = SixLabors.ImageSharp.Image;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,9 +35,20 @@ app.MapGet("/cover.jpg", async (SpotifyClient spotify) =>
     var imageUrl = track.Album.Images[0].Url;
 
     var http = new HttpClient();
-    var img = await http.GetByteArrayAsync(imageUrl);
+    var imgBytes = await http.GetByteArrayAsync(imageUrl);
 
-    return Results.File(img, "image/jpeg");
+    using var image = Image.Load(imgBytes);
+
+    image.Mutate(x => x.Resize(new ResizeOptions
+    {
+        Size = new Size(240, 240),
+        Mode = ResizeMode.Crop
+    }));
+
+    using var ms = new MemoryStream();
+    image.Save(ms, new JpegEncoder { Quality = 90 });
+
+    return Results.File(ms.ToArray(), "image/jpeg");
 });
 
 app.Run();
