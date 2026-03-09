@@ -1,4 +1,3 @@
-
 using Microsoft.AspNetCore.Mvc;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
@@ -36,31 +35,27 @@ public class CoverController : ControllerBase
         if (imageUrl is null)
         {
             var path = Path.Combine(_env.ContentRootPath, "spotti.png");
-            return File(path, "image/png");
+            return PhysicalFile(path, "image/png");
         }
 
-        var etag = "\"" + imageUrl.GetHashCode().ToString("X") + "\"";
+        var etag = $"\"{imageUrl.GetHashCode():X}\"";
 
         Response.Headers.ETag = etag;
         Response.Headers.CacheControl = "public, max-age=0";
-        
-        var ifNoneMatch = Request.Headers.IfNoneMatch.ToString();
 
-        if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch.Contains(etag))
-        {
-            return StatusCode(304);
-        }
+        if (Request.Headers.IfNoneMatch.Contains(etag))
+            return StatusCode(StatusCodes.Status304NotModified);
 
-        byte[] jpeg;
+        byte[]? cached = null;
 
         lock (_lock)
         {
             if (_cachedImageUrl == imageUrl && _cachedJpeg != null)
-            {
-                Response.Headers.ETag = etag;
-                return File(_cachedJpeg, "image/jpeg");
-            }
+                cached = _cachedJpeg;
         }
+
+        if (cached != null)
+            return File(cached, "image/jpeg");
 
         var imgBytes = await _http.GetByteArrayAsync(imageUrl);
 
@@ -76,15 +71,13 @@ public class CoverController : ControllerBase
         using var ms = new MemoryStream();
         image.Save(ms, new JpegEncoder { Quality = 70 });
 
-        jpeg = ms.ToArray();
+        var jpeg = ms.ToArray();
 
         lock (_lock)
         {
             _cachedImageUrl = imageUrl;
             _cachedJpeg = jpeg;
         }
-
-        Response.Headers.ETag = etag;
 
         return File(jpeg, "image/jpeg");
     }
@@ -94,43 +87,37 @@ public class CoverController : ControllerBase
     {
         var imageUrl = await _spotify.GetCurrentImageUrl();
 
-        Response.ContentType = "image/jpeg";
-
         if (imageUrl is null)
         {
             var path = Path.Combine(_env.ContentRootPath, "spotti.png");
             await using var fs = System.IO.File.OpenRead(path);
+            Response.ContentType = "image/png";
             await fs.CopyToAsync(Response.Body);
             return;
         }
 
-        var etag = "\"" + imageUrl.GetHashCode().ToString("X") + "\"";
-        
+        var etag = $"\"{imageUrl.GetHashCode():X}\"";
+
         Response.Headers.ETag = etag;
         Response.Headers.CacheControl = "public, max-age=0";
 
-        var ifNoneMatch = Request.Headers.IfNoneMatch.ToString();
-
-        if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch.Contains(etag))
+        if (Request.Headers.IfNoneMatch.Contains(etag))
         {
             Response.StatusCode = StatusCodes.Status304NotModified;
             return;
         }
-
-        Response.Headers.ETag = etag;
 
         byte[]? cached = null;
 
         lock (_lock)
         {
             if (_cachedImageUrl == imageUrl && _cachedJpeg != null)
-            {
                 cached = _cachedJpeg;
-            }
         }
 
         if (cached != null)
         {
+            Response.ContentType = "image/jpeg";
             Response.ContentLength = cached.Length;
             await Response.Body.WriteAsync(cached);
             return;
@@ -158,6 +145,7 @@ public class CoverController : ControllerBase
             _cachedJpeg = jpeg;
         }
 
+        Response.ContentType = "image/jpeg";
         Response.ContentLength = jpeg.Length;
         await Response.Body.WriteAsync(jpeg);
     }
